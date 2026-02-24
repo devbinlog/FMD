@@ -269,11 +269,11 @@ pnpm test:be:one "test_name"     # 단일 테스트 실행
 ---
 
 ### 샘플 테스트 
-약 100갸의샘플 존재 -> 
+약 100개의 샘플 존재 -> 
 
-프롬프트에 고양이 입력시 
+텍스트로 고양이 입력한 결과 이미지 형태
 <img width="1425" height="721" alt="프롬프트 고양이 입력" src="https://github.com/user-attachments/assets/04ffdc26-528a-4a6f-a06e-93ece837d43e" />
-이미지 출력 형태
+
 
 
 ## 설계 포인트
