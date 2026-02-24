@@ -55,7 +55,10 @@ async def process_job_inline(job_id_str: str) -> None:
             await cache_set(job_key(job_id_str), {"status": "running", "progress": 0.4})
 
             # Step 2: Generate AI reference image (Stable Diffusion)
-            ai_prompt = design.text_prompt or " ".join(profile_data["keywords"])
+            # Prefer English keywords for image generation (better AI results)
+            import re as _re
+            en_keywords = [k for k in profile_data["keywords"] if _re.match(r"[a-zA-Z]", k)]
+            ai_prompt = " ".join(en_keywords) if en_keywords else (design.text_prompt or "design")
             style = (design.category_hint or "design-asset").lower()
             ai_image = await generate_design_image(ai_prompt, style)
             logger.info("AI image generated via %s", ai_image["method"])

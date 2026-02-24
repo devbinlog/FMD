@@ -16,14 +16,14 @@
 
 | 영역 | 기술 |
 |---|---|
-| 프론트엔드 | Next.js 16, TypeScript, Tailwind CSS v4, Lucide React |
-| 백엔드 | FastAPI, SQLAlchemy async, Pydantic v2 |
-| 데이터베이스 | SQLite (개발) / PostgreSQL (프로덕션) |
-| 비동기 큐 | asyncio.Queue 인메모리 (개발) / Redis (프로덕션) |
-| AI 이미지 생성 | Stability AI (Stable Diffusion), Pollinations.ai, DiceBear |
-| 이미지 처리 | Pillow (캔버스 dominant color 추출) |
-| HTTP 클라이언트 | httpx (async) |
-| 테스트 | pytest, pytest-asyncio |
+| **프론트엔드** | Next.js 16, TypeScript, Tailwind CSS v4, Lucide React |
+| **백엔드** | FastAPI, SQLAlchemy async, Pydantic v2 |
+| **데이터베이스** | SQLite (개발) / PostgreSQL (프로덕션) |
+| **비동기 큐** | asyncio.Queue 인메모리 (개발) / Redis (프로덕션) |
+| **AI 이미지 생성** | Stability AI (Stable Diffusion), HuggingFace, Openverse |
+| **이미지 처리** | Pillow (캔버스 dominant color 추출) |
+| **HTTP 클라이언트** | httpx (async) |
+| **테스트** | pytest, pytest-asyncio |
 
 ---
 
@@ -55,11 +55,11 @@
 │  ┌─────────┐  ┌───────────┐  ┌──────────────┐  │
 │  │  Mock   │  │    API    │  │  AI Image    │  │
 │  │Provider │  │ Provider  │  │  Generator   │  │
-│  │ 22 상품  │  │Unsplash   │  │  우선순위 체인│  │
-│  │picsum   │  │Pexels     │  │  Stability AI│  │
-│  │이미지   │  │Pixabay    │  │  Pollinations│  │
-│  └─────────┘  └───────────┘  │  DiceBear    │  │
-│                               └──────────────┘  │
+│  │100 상품 │  │Openverse  │  │  우선순위 체인│  │
+│  │14카테고리│  │Unsplash   │  │  Stability AI│  │
+│  │         │  │Pexels     │  │  HuggingFace │  │
+│  └─────────┘  │Pixabay    │  │  Openverse   │  │
+│               └───────────┘  └──────────────┘  │
 │                                                 │
 │  ┌──────────────────────────────────────────┐   │
 │  │         Ranking Engine                   │   │
@@ -87,13 +87,16 @@
 API 키 없이도 동작하는 다단계 폴백 구조:
 ```
 ComfyUI (로컬) → Stability AI → HuggingFace → Stable Horde
-  → Pollinations.ai (무료) → DiceBear (무료 SVG) → 로컬 SVG
+  → Openverse (CC 라이선스 무료) → 로컬 SVG
 ```
+- 한국 환경에서는 Pollinations.ai가 차단되므로 Openverse를 기본 무료 소스로 사용
+- Openverse는 Wikipedia, Flickr 등의 CC 라이선스 이미지를 키워드 기반으로 검색
 
 ### 검색 & 랭킹
-- Mock Provider — 22개 샘플 상품, 실제 Dribbble / Behance / Figma / Freepik 등 마켓플레이스 링크 연결
-- API Provider — Unsplash / Pexels / Pixabay 공식 무료 API, 키 없을 때도 picsum.photos 이미지로 폴백
-- 랭킹 공식 — `0.55×임베딩 + 0.20×색상 + 0.20×키워드 + 0.05×메타` (임베딩 있을 때) / 네거티브 키워드 페널티 / 중복 URL 페널티
+- **Mock Provider** — 100개 샘플 상품 (14개 카테고리), Dribbble / Behance / Figma / Freepik 등 실제 마켓플레이스 링크 연결
+- **API Provider** — Openverse 키워드 검색 (무료, API 키 불필요) + Unsplash / Pexels / Pixabay 공식 API (선택)
+- **한국어 지원** — 100개 이상의 한국어→영어 번역 매핑 (`악기` → `instrument`, `고양이` → `cat` 등)
+- **랭킹 공식** — `0.55×임베딩 + 0.20×색상 + 0.20×키워드 + 0.05×메타` (임베딩 있을 때) / 네거티브 키워드 페널티 / 중복 URL 페널티
 
 ### 비동기 잡 처리
 - `POST /designs/{id}/process` → Job 생성 → `asyncio.create_task` 인라인 처리
@@ -103,6 +106,47 @@ ComfyUI (로컬) → Stability AI → HuggingFace → Stable Horde
 - `GET /sessions/{id}/history` — 세션 내 최근 20개 검색 반환
 - 각 항목: AI 레퍼런스 이미지, 키워드 태그, dominant color, 상위 3개 결과 미리보기
 - 프론트엔드 슬라이드오버 패널 (첫 검색 후 Header에 History 버튼 표시)
+
+---
+
+## Mock 샘플 데이터 (100개)
+
+API 키 없이도 즉시 검색 결과를 확인할 수 있도록 14개 카테고리, 100개 샘플 상품이 내장되어 있습니다.
+
+| 카테고리 | 샘플 수 | 검색 키워드 예시 |
+|---|---|---|
+| UI / 대시보드 | 6 | ui, dashboard, mobile, dark, landing |
+| 로고 / 브랜드 | 5 | logo, brand, minimal, geometric, vintage |
+| 아이콘 | 5 | icon, flat, 3d, line, emoji |
+| 일러스트 | 6 | illustration, watercolor, abstract, character, botanical |
+| 음악 / 악기 | 4 | music, instrument, guitar, piano, jazz |
+| 음식 / 카페 | 4 | food, restaurant, cafe, coffee, delivery |
+| 패션 / 의류 | 3 | fashion, clothing, style, elegant |
+| 여행 | 4 | travel, airplane, map, tourism, adventure |
+| 스포츠 / 피트니스 | 3 | sports, fitness, soccer, basketball, gym |
+| 기술 / 스타트업 | 4 | tech, startup, saas, ai, robot |
+| 자연 / 환경 | 3 | nature, eco, plant, leaf, green |
+| 동물 / 반려동물 | 3 | animal, cat, dog, pet, cute |
+| 의료 / 헬스 | 3 | medical, health, hospital, doctor |
+| 교육 | 3 | education, school, book, elearning |
+| 게임 / 엔터테인먼트 | 3 | game, rpg, esports, anime, character |
+| 소셜미디어 / 마케팅 | 2 | social, instagram, banner, marketing |
+| 부동산 / 건축 | 3 | realestate, house, building, interior |
+| 금융 / 핀테크 | 3 | finance, banking, fintech, crypto |
+| 자동차 | 2 | car, automotive, vehicle |
+| 우주 / 과학 | 2 | space, astronomy, star, planet |
+| 시즌 / 이벤트 | 5 | christmas, halloween, newyear, summer, winter |
+| 사진 / 카메라 | 2 | photography, camera, photo |
+| 팟캐스트 / 미디어 | 2 | podcast, media, broadcast |
+| 크립토 / NFT | 2 | crypto, nft, blockchain, web3 |
+| 3D / 글래스모피즘 | 3 | 3d, gradient, glass, neon |
+| 애니 / 카와이 | 2 | anime, kawaii, chibi, manga |
+| HR / 비즈니스 | 3 | corporate, presentation, infographic |
+| 뷰티 / 화장품 | 2 | beauty, cosmetics, skincare, makeup |
+| 타이포그래피 | 1 | typography, font, headline |
+| 웨딩 / 이벤트 | 2 | wedding, party, birthday |
+
+> **한국어 검색 지원**: 악기, 고양이, 음식, 여행, 우주 등 100개 이상의 한국어 단어를 영어로 자동 번역해 검색합니다.
 
 ---
 
@@ -194,13 +238,18 @@ cd frontend && pnpm install
 `backend/.env` 파일 생성:
 
 ```bash
-STABILITY_API_KEY=sk-...       # Stable Diffusion 이미지 생성
+# AI 이미지 생성 (우선순위 순 — 하나만 설정해도 됨)
+HF_TOKEN=hf_...                # HuggingFace 무료 토큰 (추천, huggingface.co/settings/tokens)
+STABILITY_API_KEY=sk-...       # Stability AI — Stable Diffusion 이미지 생성
+COMFYUI_URL=http://...         # 로컬 ComfyUI 서버 주소
+
+# 검색 결과 이미지 (선택 — 없어도 Openverse로 동작)
 UNSPLASH_ACCESS_KEY=...        # Unsplash API (무료 50 req/hr)
 PEXELS_API_KEY=...             # Pexels API (무료 200 req/hr)
 PIXABAY_API_KEY=...            # Pixabay API (무료 100 req/hr)
 ```
 
-> 모든 API 키는 선택 사항입니다. 키 없이도 mock 데이터와 무료 이미지 서비스로 전체 기능이 동작합니다.
+> 모든 API 키는 선택 사항입니다. 키 없이도 **Openverse** (CC 라이선스 무료 이미지)와 100개 내장 샘플로 전체 기능이 동작합니다.
 
 ### 개발 서버 실행
 

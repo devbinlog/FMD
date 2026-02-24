@@ -80,9 +80,9 @@ async def generate_design_image(
         if result.get("image_url"):
             return result
 
-    # 5. Pollinations.ai — backend fetches image as base64 (no browser dependency)
-    logger.info("Using Pollinations.ai (free, no API key needed)")
-    return await _pollinations_fetch(prompt, style)
+    # 5. Openverse — free open-licensed image search (no API key needed)
+    logger.info("Using Openverse (free, no API key needed)")
+    return await _openverse_fetch(prompt, style)
 
 
 def _enhance_prompt(prompt: str, style: str) -> str:
@@ -146,41 +146,24 @@ async def _generate_via_stability(prompt: str) -> dict:
 
 
 async def _pollinations_fetch(prompt: str, style: str = "design-asset") -> dict:
-    """Try Pollinations.ai with single English keywords one at a time.
+    """Generate image via Pollinations.ai (free, no API key needed).
 
-    Key constraints (discovered by testing):
-      - Only SINGLE words work — multi-word prompts cause 530
-      - No query parameters (even nologo=true causes 530 for some words)
-      - Some common words (logo, minimal, icon) return 530 → try synonyms
-      - Falls back to local SVG generation if all attempts fail
+    Tries candidates in order:
+      1. Full prompt (best quality)
+      2. Top 4 keywords joined
+      3. Individual keywords as fallback
     """
     import re
     import base64
     from app.services.profile_generator import _KO_EN_MAP
 
-    # Only filter truly generic suffix words (NOT user design keywords like flat/icon/logo)
     _SUFFIX_NOISE = {
         "professional", "asset", "background", "high", "quality",
         "vector", "style", "digital", "vibrant", "colors",
         "interface", "figma", "solid", "lines", "white", "clean",
     }
 
-    # Synonyms for words that consistently get 530 from Pollinations.ai
-    _SYNONYMS: dict[str, str] = {
-        "logo": "brand",
-        "icon": "symbol",
-        "minimal": "simple",
-        "modern": "sleek",
-        "flat": "geometric",
-        "design": "artwork",
-        "illustration": "drawing",
-        "graphic": "visual",
-        "pattern": "texture",
-        "banner": "poster",
-        "card": "label",
-    }
-
-    # Build English keyword list (keep design terms, remove only suffix noise)
+    # Build English keyword list from prompt
     en_words = re.findall(r"[a-zA-Z]+", prompt)
     label_words = [w for w in en_words if w.lower() not in _SUFFIX_NOISE]
 
@@ -204,43 +187,124 @@ async def _pollinations_fetch(prompt: str, style: str = "design-asset") -> dict:
             seen.add(w.lower())
             unique_words.append(w)
 
-    # Build candidate list: original keywords + synonyms for 530-prone words
+    # Build candidate prompts: full → short → single words
     candidates: list[str] = []
-    for w in unique_words[:4]:
-        candidates.append(w)
-        syn = _SYNONYMS.get(w.lower())
-        if syn and syn not in seen:
-            candidates.append(syn)
+    if unique_words:
+        candidates.append(" ".join(unique_words))           # full prompt
+        if len(unique_words) > 4:
+            candidates.append(" ".join(unique_words[:4]))   # top 4 keywords
+        candidates.extend(unique_words[:3])                 # individual fallbacks
+    else:
+        candidates.append(prompt)
 
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-        for kw in candidates[:6]:
-            url = f"https://image.pollinations.ai/prompt/{quote(kw)}"
-            try:
-                resp = await client.get(url)
-                if (resp.status_code == 200
-                        and "image" in resp.headers.get("content-type", "")
-                        and len(resp.content) > 1000):
-                    img_b64 = base64.b64encode(resp.content).decode()
-                    ct = resp.headers.get("content-type", "image/jpeg").split(";")[0]
-                    logger.info("Pollinations.ai OK for '%s' (%d bytes)", kw, len(resp.content))
-                    return {
-                        "image_base64": img_b64,
-                        "image_url": f"data:{ct};base64,{img_b64}",
-                        "method": "pollinations_ai",
-                    }
-                logger.warning("Pollinations.ai: %d for keyword '%s'", resp.status_code, kw)
-            except Exception as exc:
-                logger.warning("Pollinations.ai error for '%s': %s", kw, exc)
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        for candidate in candidates:
+            encoded = quote(candidate)
+            # Try without query params first (some params trigger 530)
+            urls_to_try = [
+                f"https://image.pollinations.ai/prompt/{encoded}",
+                f"https://image.pollinations.ai/prompt/{encoded}?model=flux&width=512&height=512",
+            ]
+            for url in urls_to_try:
+                try:
+                    resp = await client.get(url)
+                    if (resp.status_code == 200
+                            and "image" in resp.headers.get("content-type", "")
+                            and len(resp.content) > 1000):
+                        img_b64 = base64.b64encode(resp.content).decode()
+                        ct = resp.headers.get("content-type", "image/jpeg").split(";")[0]
+                        logger.info("Pollinations.ai OK for '%s' (%d bytes)", candidate, len(resp.content))
+                        return {
+                            "image_base64": img_b64,
+                            "image_url": f"data:{ct};base64,{img_b64}",
+                            "method": "pollinations_ai",
+                        }
+                    logger.warning("Pollinations.ai: %d for '%s'", resp.status_code, candidate)
+                    if resp.status_code != 530:
+                        break  # Non-530 errors won't be fixed by trying another URL
+                except Exception as exc:
+                    logger.warning("Pollinations.ai error for '%s': %s", candidate, exc)
+                    break
 
-    # Pollinations blocked all keywords → try DiceBear (design-quality SVG, always works)
-    logger.info("Pollinations unavailable — trying DiceBear")
-    result = await _dicebear_fetch(unique_words)
-    if result.get("image_url"):
-        return result
-
-    # Last resort: generate locally
-    logger.info("All remote sources failed — generating local SVG preview")
+    # All Pollinations attempts failed → local SVG
+    logger.info("Pollinations unavailable — generating local SVG preview")
     return _svg_result(prompt, unique_words)
+
+
+async def _openverse_fetch(prompt: str, style: str = "design-asset") -> dict:
+    """Fetch a relevant open-licensed image from Openverse (free, no API key).
+
+    Openverse indexes CC-licensed images from Wikipedia, Flickr, etc.
+    Falls back to local SVG if no results found.
+    """
+    import re as _re
+    import base64
+    from app.services.profile_generator import _KO_EN_MAP
+
+    # Build English query from prompt
+    en_words = _re.findall(r"[a-zA-Z]+", prompt)
+    _NOISE = {
+        "professional", "asset", "clean", "high", "quality", "vector",
+        "style", "digital", "vibrant", "colors", "interface", "figma",
+        "solid", "lines", "white", "design", "background",
+    }
+    en_words = [w for w in en_words if w.lower() not in _NOISE]
+
+    ko_words = _re.findall(r"[가-힣]+", prompt)
+    for kw in ko_words:
+        en = _KO_EN_MAP.get(kw)
+        if en:
+            en_words.append(en)
+
+    if not en_words:
+        return _svg_result(prompt, [])
+
+    # Build search queries: most specific → most general
+    queries = []
+    queries.append(" ".join(en_words[:3]) + " illustration")
+    queries.append(" ".join(en_words[:2]))
+    queries.append(en_words[0])
+
+    headers = {"User-Agent": "FMD-Portfolio/1.0 (design-search-demo)"}
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for q in queries:
+            try:
+                resp = await client.get(
+                    "https://api.openverse.org/v1/images/",
+                    params={"q": q, "page_size": 5, "license_type": "commercial,modification"},
+                    headers=headers,
+                )
+                if resp.status_code == 200:
+                    results = resp.json().get("results", [])
+                    # Prefer images that have actual thumbnail URLs
+                    for item in results:
+                        img_url = (
+                            item.get("thumbnail")
+                            or item.get("url")
+                        )
+                        if img_url and img_url.startswith("http"):
+                            # Fetch and encode as base64
+                            try:
+                                img_resp = await client.get(img_url)
+                                if (img_resp.status_code == 200
+                                        and "image" in img_resp.headers.get("content-type", "")
+                                        and len(img_resp.content) > 500):
+                                    img_b64 = base64.b64encode(img_resp.content).decode()
+                                    ct = img_resp.headers.get("content-type", "image/jpeg").split(";")[0]
+                                    logger.info("Openverse OK for '%s' (%d bytes)", q, len(img_resp.content))
+                                    return {
+                                        "image_base64": img_b64,
+                                        "image_url": f"data:{ct};base64,{img_b64}",
+                                        "method": "openverse",
+                                    }
+                            except Exception:
+                                continue
+            except Exception as exc:
+                logger.warning("Openverse error for '%s': %s", q, exc)
+
+    logger.info("Openverse: no results — falling back to local SVG")
+    return _svg_result(prompt, en_words)
 
 
 def _svg_result(prompt: str, keywords: list[str]) -> dict:

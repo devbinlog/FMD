@@ -48,12 +48,21 @@ class ApiProvider(BaseProvider):
 
         has_any_key = any([self._unsplash_key, self._pexels_key, self._pixabay_key])
 
+        results: list[dict] = []
+
+        # Always try Openverse first (free, no API key needed)
+        try:
+            ov_items = await self._search_openverse(query, limit)
+            results.extend(ov_items)
+        except Exception as e:
+            logger.warning("Openverse search failed: %s", e)
+
         if not has_any_key:
+            if results:
+                return results[:limit]
             return self._fallback_results(en_keywords, category, query, limit)
 
         per_source = max(limit // 3, 5)
-        results: list[dict] = []
-
         for fetcher in (self._search_unsplash, self._search_pexels, self._search_pixabay):
             try:
                 items = await fetcher(query, dominant_color, per_source)
@@ -89,10 +98,9 @@ class ApiProvider(BaseProvider):
 
         results = []
         for i, (name, url) in enumerate(sources[:limit]):
-            seed = f"{base_seed}-{name.lower().replace(' ', '-')}"
             results.append({
                 "title": f"{title_kw} {cat_label} — {name}",
-                "image_url": f"https://picsum.photos/seed/{seed}/400/300",
+                "image_url": None,
                 "product_url": url,
                 "price": 0,
                 "color_hex": None,
@@ -100,6 +108,43 @@ class ApiProvider(BaseProvider):
             })
 
         logger.info("Fallback: generated %d marketplace links for '%s'", len(results), query)
+        return results
+
+    # ------------------------------------------------------------------
+    # Openverse  https://api.openverse.org  (free, no API key)
+    # ------------------------------------------------------------------
+    async def _search_openverse(self, query: str, limit: int) -> list[dict]:
+        """Search Openverse for CC-licensed images (no API key required)."""
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(
+                "https://api.openverse.org/v1/images/",
+                params={
+                    "q": query,
+                    "page_size": min(limit, 20),
+                    "license_type": "commercial,modification",
+                },
+                headers={"User-Agent": "FMD-Portfolio/1.0 (design-search-demo)"},
+            )
+            resp.raise_for_status()
+
+        data = resp.json()
+        results = []
+        for item in data.get("results", []):
+            img_url = item.get("thumbnail") or item.get("url")
+            product_url = item.get("foreign_landing_url") or item.get("url")
+            title = (item.get("title") or query)[:120]
+            tags = [t.get("name", "") for t in item.get("tags", [])[:8] if t.get("name")]
+            if not tags:
+                tags = [w for w in query.lower().split()[:6]]
+            results.append({
+                "title": title,
+                "image_url": img_url,
+                "product_url": product_url,
+                "price": 0,
+                "color_hex": None,
+                "tags": tags,
+            })
+        logger.info("Openverse: %d results for '%s'", len(results), query)
         return results
 
     # ------------------------------------------------------------------
