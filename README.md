@@ -8,7 +8,7 @@
 
 디자이너나 기획자가 "이런 느낌의 디자인 에셋이 필요한데"라고 생각할 때, 직접 키워드를 떠올리거나 여러 사이트를 돌아다닐 필요 없이 — 텍스트로 묘사하거나 간단한 스케치만 해도 AI가 의도를 분석해 관련 디자인 상품을 찾아주는 검색 엔진입니다.
 
-사용자 입력 → **DesignProfile 생성** → **AI 레퍼런스 이미지 생성** → **멀티 프로바이더 검색** → **TF-IDF 임베딩 기반 랭킹** → 결과 반환의 파이프라인으로 동작합니다.
+사용자 입력 → DesignProfile 생성 → AI 레퍼런스 이미지 생성 → 멀티 프로바이더 검색 → TF-IDF 임베딩 기반 랭킹 → 결과 반환의 파이프라인으로 동작합니다.
 
 ---
 
@@ -16,14 +16,14 @@
 
 | 영역 | 기술 |
 |---|---|
-| **프론트엔드** | Next.js 16, TypeScript, Tailwind CSS v4, Lucide React |
-| **백엔드** | FastAPI, SQLAlchemy async, Pydantic v2 |
-| **데이터베이스** | SQLite (개발) / PostgreSQL (프로덕션) |
-| **비동기 큐** | asyncio.Queue 인메모리 (개발) / Redis (프로덕션) |
-| **AI 이미지 생성** | Stability AI (Stable Diffusion), Pollinations.ai, DiceBear |
-| **이미지 처리** | Pillow (캔버스 dominant color 추출) |
-| **HTTP 클라이언트** | httpx (async) |
-| **테스트** | pytest, pytest-asyncio |
+| 프론트엔드 | Next.js 16, TypeScript, Tailwind CSS v4, Lucide React |
+| 백엔드 | FastAPI, SQLAlchemy async, Pydantic v2 |
+| 데이터베이스 | SQLite (개발) / PostgreSQL (프로덕션) |
+| 비동기 큐 | asyncio.Queue 인메모리 (개발) / Redis (프로덕션) |
+| AI 이미지 생성 | Stability AI (Stable Diffusion), Pollinations.ai, DiceBear |
+| 이미지 처리 | Pillow (캔버스 dominant color 추출) |
+| HTTP 클라이언트 | httpx (async) |
+| 테스트 | pytest, pytest-asyncio |
 
 ---
 
@@ -74,14 +74,14 @@
 ## 주요 기능
 
 ### 입력
-- **텍스트 프롬프트** — 영어 및 한국어 입력 지원, 한국어 키워드 자동 번역
-- **드로잉 캔버스** — 스케치를 그리면 dominant color를 픽셀 분석(Pillow)으로 추출
-- **카테고리 선택** — UI / Logo / Icon / Illustration
+- 텍스트 프롬프트 — 영어 및 한국어 입력 지원, 한국어 키워드 자동 번역
+- 드로잉 캔버스 — 스케치를 그리면 dominant color를 픽셀 분석(Pillow)으로 추출
+- 카테고리 선택 — UI / Logo / Icon / Illustration
 
 ### AI 분석 파이프라인
-- **키워드 추출** — 불용어 제거, 한국어→영어 번역 매핑
-- **색상 감지** — 텍스트에서 색상명 파싱 / 캔버스에서 RGB 픽셀 분석
-- **TF-IDF 임베딩** — 키워드 벡터를 JSON bytes로 직렬화해 DB 저장, 랭킹 시 코사인 유사도 계산 (Python stdlib만 사용, 외부 의존성 없음)
+- 키워드 추출 — 불용어 제거, 한국어→영어 번역 매핑
+- 색상 감지*— 텍스트에서 색상명 파싱 / 캔버스에서 RGB 픽셀 분석
+- TF-IDF 임베딩 — 키워드 벡터를 JSON bytes로 직렬화해 DB 저장, 랭킹 시 코사인 유사도 계산 (Python stdlib만 사용, 외부 의존성 없음)
 
 ### AI 이미지 생성 (우선순위 체인)
 API 키 없이도 동작하는 다단계 폴백 구조:
@@ -91,9 +91,9 @@ ComfyUI (로컬) → Stability AI → HuggingFace → Stable Horde
 ```
 
 ### 검색 & 랭킹
-- **Mock Provider** — 22개 샘플 상품, 실제 Dribbble / Behance / Figma / Freepik 등 마켓플레이스 링크 연결
-- **API Provider** — Unsplash / Pexels / Pixabay 공식 무료 API, 키 없을 때도 picsum.photos 이미지로 폴백
-- **랭킹 공식** — `0.55×임베딩 + 0.20×색상 + 0.20×키워드 + 0.05×메타` (임베딩 있을 때) / 네거티브 키워드 페널티 / 중복 URL 페널티
+- Mock Provider — 22개 샘플 상품, 실제 Dribbble / Behance / Figma / Freepik 등 마켓플레이스 링크 연결
+- API Provider — Unsplash / Pexels / Pixabay 공식 무료 API, 키 없을 때도 picsum.photos 이미지로 폴백
+- 랭킹 공식 — `0.55×임베딩 + 0.20×색상 + 0.20×키워드 + 0.05×메타` (임베딩 있을 때) / 네거티브 키워드 페널티 / 중복 URL 페널티
 
 ### 비동기 잡 처리
 - `POST /designs/{id}/process` → Job 생성 → `asyncio.create_task` 인라인 처리
@@ -222,11 +222,11 @@ pnpm test:be:one "test_name"     # 단일 테스트 실행
 
 ## 설계 포인트
 
-**API 키 없이도 완전히 동작하는 구조**
+API 키 없이도 완전히 동작하는 구조
 모든 외부 서비스에 다단계 폴백 체인을 적용해, 어떤 환경에서도 전체 기능이 동작합니다. Pollinations.ai → DiceBear → 로컬 SVG 생성까지 이어지는 이미지 생성 체인이 대표적인 예입니다.
 
-**외부 ML 라이브러리 없는 임베딩 구현**
+외부 ML 라이브러리 없는 임베딩 구현
 TF-IDF 기반 코사인 유사도를 Python 표준 라이브러리(`math`, `json`, `collections`)만으로 구현했습니다. numpy나 scikit-learn 없이도 의미 있는 시맨틱 유사도 점수를 랭킹에 반영합니다.
 
-**SQLite/PostgreSQL 공용 포터블 타입**
+SQLite/PostgreSQL 공용 포터블 타입
 `GUID`, `JSONType`, `StringArray` 커스텀 SQLAlchemy 타입을 구현해 개발(SQLite)과 프로덕션(PostgreSQL) 환경을 코드 변경 없이 전환할 수 있습니다.
