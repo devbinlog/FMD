@@ -1,0 +1,14 @@
+{
+  "name": "fmd",
+  "private": true,
+  "scripts": {
+    "dev:fe": "pnpm --filter frontend dev",
+    "dev:be": "cd backend && uvicorn app.main:app --reload --port 8000",
+    "dev:worker": "cd backend && python -m app.worker.main",
+    "dev": "concurrently \"pnpm dev:fe\" \"pnpm dev:be\"",
+    "build:fe": "pnpm --filter frontend build",
+    "lint:fe": "pnpm --filter frontend lint",
+    "test:be": "cd backend && python -m pytest",
+    "test:be:one": "cd backend && python -m pytest -k"
+  }
+}
