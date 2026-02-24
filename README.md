@@ -1,4 +1,4 @@
-# FMD — Find My Design
+<img width="1425" height="721" alt="스크린샷 2026-02-24 오후 8 45 06" src="https://github.com/user-attachments/assets/358e0e4a-61bb-4801-a5b9-012fcec8facd" /># FMD — Find My Design
 
 > AI 기반 디자인 검색 엔진. 텍스트 설명이나 스케치로 원하는 디자인을 묘사하면, AI가 분석해 여러 소스에서 매칭 상품을 찾아 랭킹 순으로 추천합니다.
 
@@ -266,8 +266,15 @@ pnpm dev:be     # 백엔드만    http://localhost:8000
 pnpm test:be                     # 전체 백엔드 테스트 (26개)
 pnpm test:be:one "test_name"     # 단일 테스트 실행
 ```
-
 ---
+
+### 샘플 테스트 
+약 100갸의샘플 존재 -> 
+
+프롬프트에 고양이 입력시 
+<img width="1425" height="721" alt="프롬프트 고양이 입력" src="https://github.com/user-attachments/assets/04ffdc26-528a-4a6f-a06e-93ece837d43e" />
+이미지 출력 형태
+
 
 ## 설계 포인트
 
