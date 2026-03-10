@@ -252,6 +252,7 @@ def rank_results(..., weights: RankingWeights = DEFAULT_WEIGHTS) -> list[dict]:
 
 가중치 설정은 `src/configs/console/policies.ts`에 있으며 Config Studio 어드민 패널에서 런타임에 편집 가능합니다. 배포 없이 비엔지니어도 랭킹을 조정할 수 있습니다.
 
+---
 
 ## 주요 기능
 
@@ -259,7 +260,7 @@ def rank_results(..., weights: RankingWeights = DEFAULT_WEIGHTS) -> list[dict]:
 - 한국어 지원 — 100개 이상의 한국어→영어 번역 맵, 한글 불용어 필터링. `고양이` → `cat` 변환 후 키워드 추출
 - AI 스타일 변형 4종 — minimal / modern / vintage / bold를 `asyncio.gather`로 병렬 생성
 - 7단계 이미지 생성 폴백 — ComfyUI → Stability AI → HuggingFace → Stable Horde → Pollinations → Openverse → 로컬 SVG. API 키 없이도 동작
-- 멀티 프로바이더 검색 — Mock 카탈로그, Openverse API, DuckDuckGo 웹 크롤링. `BaseProvider`로 확장 가능
+- **멀티 프로바이더 검색** — Mock 카탈로그, Naver Image Search, Google Custom Search, Openverse. `BaseProvider`로 확장 가능
 - 다중 신호 랭킹 — Embedding(55%) + Color(20%) + Keyword(20%) + Meta(5%), 승산적 페널티 포함
 - 외부 ML 라이브러리 없음 — TF-IDF 임베딩을 Python stdlib(`math`, `json`, `collections`)만으로 구현
 - 인프라 없는 개발 환경 — 인메모리 큐, 인메모리 캐시, SQLite. Docker나 Redis 없이 로컬 실행 가능
