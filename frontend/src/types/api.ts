@@ -20,12 +20,18 @@ export interface ProcessResponse {
   status: string;
 }
 
+export interface StyleVariation {
+  style: "minimal" | "modern" | "vintage" | "bold";
+  image_url: string;
+}
+
 export interface JobStatus {
   job_id: string;
   status: "queued" | "running" | "done" | "failed";
   progress: number;
   error_code?: string;
   ai_image_url?: string;
+  style_variations?: StyleVariation[];
   keywords?: string[];
   dominant_color?: string;
 }

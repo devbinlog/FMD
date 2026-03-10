@@ -16,6 +16,13 @@ from app.services.embedder import build_query_embedding
 
 logger = logging.getLogger("fmd.worker")
 
+_STYLE_VARIANTS = [
+    ("minimal", "minimal, clean, white background, simple geometry, flat design"),
+    ("modern", "modern, bold, gradient, sleek, contemporary, professional"),
+    ("vintage", "vintage, retro, warm tones, aged paper, classic typography"),
+    ("bold", "bold, high contrast, vibrant colors, expressive, saturated palette"),
+]
+
 
 async def process_job_inline(job_id_str: str) -> None:
     """Process a job directly (no queue). Called via asyncio.create_task."""
@@ -54,14 +61,33 @@ async def process_job_inline(job_id_str: str) -> None:
             await db.commit()
             await cache_set(job_key(job_id_str), {"status": "running", "progress": 0.4})
 
-            # Step 2: Generate AI reference image (Stable Diffusion)
-            # Prefer English keywords for image generation (better AI results)
+            # Step 2: Generate 4 AI style variations in parallel
+            import asyncio as _asyncio
             import re as _re
             en_keywords = [k for k in profile_data["keywords"] if _re.match(r"[a-zA-Z]", k)]
             ai_prompt = " ".join(en_keywords) if en_keywords else (design.text_prompt or "design")
             style = (design.category_hint or "design-asset").lower()
-            ai_image = await generate_design_image(ai_prompt, style)
-            logger.info("AI image generated via %s", ai_image["method"])
+
+            async def _gen_style(variant_suffix: str):
+                return await generate_design_image(f"{ai_prompt}, {variant_suffix}", style)
+
+            variations_raw = await _asyncio.gather(
+                *[_gen_style(vs) for _, vs in _STYLE_VARIANTS],
+                return_exceptions=True,
+            )
+
+            style_variations: list[dict] = []
+            first_image_url: str | None = None
+            for (sname, _), r in zip(_STYLE_VARIANTS, variations_raw):
+                if isinstance(r, dict) and r.get("image_url"):
+                    style_variations.append({"style": sname, "image_url": r["image_url"]})
+                    if first_image_url is None:
+                        first_image_url = r["image_url"]
+                else:
+                    logger.warning("Style %s failed: %s", sname, r)
+
+            ai_image = {"image_url": first_image_url, "method": "multi-style"}
+            logger.info("Generated %d style variations", len(style_variations))
 
             job.progress = 0.7
             await db.commit()
@@ -74,12 +100,15 @@ async def process_job_inline(job_id_str: str) -> None:
             stmt = select(DesignProfile).where(DesignProfile.design_id == str(design.id))
             existing = (await db.execute(stmt)).scalar_one_or_none()
 
+            profile_ext = {
+                **profile_data["profile"],
+                "ai_image_url": ai_image["image_url"],
+                "ai_image_method": ai_image["method"],
+                "style_variations": style_variations,
+            }
+
             if existing:
-                existing.profile = {
-                    **profile_data["profile"],
-                    "ai_image_url": ai_image["image_url"],
-                    "ai_image_method": ai_image["method"],
-                }
+                existing.profile = profile_ext
                 existing.keywords = profile_data["keywords"]
                 existing.negative_keywords = profile_data["negative_keywords"]
                 existing.dominant_color = profile_data["dominant_color"]
@@ -89,11 +118,7 @@ async def process_job_inline(job_id_str: str) -> None:
                 dp = DesignProfile(
                     design_id=str(design.id),
                     profile_hash=design_scoped_hash,
-                    profile={
-                        **profile_data["profile"],
-                        "ai_image_url": ai_image["image_url"],
-                        "ai_image_method": ai_image["method"],
-                    },
+                    profile=profile_ext,
                     keywords=profile_data["keywords"],
                     negative_keywords=profile_data["negative_keywords"],
                     dominant_color=profile_data["dominant_color"],
@@ -106,6 +131,7 @@ async def process_job_inline(job_id_str: str) -> None:
             job.result = {
                 "ai_image_url": ai_image["image_url"],
                 "ai_image_method": ai_image["method"],
+                "style_variations": style_variations,
                 "keywords": profile_data["keywords"],
                 "dominant_color": profile_data["dominant_color"],
             }
@@ -117,6 +143,7 @@ async def process_job_inline(job_id_str: str) -> None:
                 "status": "done",
                 "progress": 1.0,
                 "ai_image_url": ai_image["image_url"],
+                "style_variations": style_variations,
                 "keywords": profile_data["keywords"],
                 "dominant_color": profile_data["dominant_color"],
             })

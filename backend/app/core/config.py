@@ -9,7 +9,7 @@ _DB_PATH = _BASE_DIR / "fmd.db"
 class Settings(BaseSettings):
     DATABASE_URL: str = f"sqlite+aiosqlite:///{_DB_PATH}"
     REDIS_URL: str = ""  # empty = use in-memory queue
-    CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:3004"]
     ENV: str = "dev"
     WORKER_CONCURRENCY: int = 2
     JOB_TIMEOUT_SECONDS: int = 300

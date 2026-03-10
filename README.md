@@ -1,288 +1,343 @@
 <img width="1425" height="721" alt="스크린샷 2026-02-24 오후 8 45 06" src="https://github.com/user-attachments/assets/358e0e4a-61bb-4801-a5b9-012fcec8facd" /># FMD — Find My Design
 
-> AI 기반 디자인 검색 엔진. 텍스트 설명이나 스케치로 원하는 디자인을 묘사하면, AI가 분석해 여러 소스에서 매칭 상품을 찾아 랭킹 순으로 추천합니다.
+> An AI-powered design asset search engine. Describe what you're looking for — in text or as a sketch — and FMD finds matching design assets across multiple sources.
 
 ---
 
-## 프로젝트 개요
+## Problem
 
-디자이너나 기획자가 "이런 느낌의 디자인 에셋이 필요한데"라고 생각할 때, 직접 키워드를 떠올리거나 여러 사이트를 돌아다닐 필요 없이 — 텍스트로 묘사하거나 간단한 스케치만 해도 AI가 의도를 분석해 관련 디자인 상품을 찾아주는 검색 엔진입니다.
+Designers know the visual style they want before they can name it. Searching design platforms with keywords like "minimal" or "modern" returns thousands of results with no signal about which ones match the specific visual intent. Searching across multiple platforms (Freepik, Dribbble, Behance, Unsplash) is manual and time-consuming.
 
-사용자 입력 → DesignProfile 생성 → AI 레퍼런스 이미지 생성 → 멀티 프로바이더 검색 → TF-IDF 임베딩 기반 랭킹 → 결과 반환의 파이프라인으로 동작합니다.
+The underlying problem is a vocabulary gap: visual intent is richer than keyword vocabulary.
 
 ---
 
-## 기술 스택
+## Solution
 
-| 영역 | 기술 |
+FMD translates visual intent — expressed as freeform text or a rough sketch — into a structured `DesignProfile` that drives semantic search, AI reference image generation, and multi-signal ranking.
+
+```
+User Input (text or sketch)
+  → DesignProfile { keywords, dominant_color, embedding }
+  → AI reference images (4 style variations)
+  → Multi-provider candidate search
+  → Ranked results returned to UI
+```
+
+---
+
+## System Architecture
+
+```mermaid
+graph TD
+    subgraph Client ["Client (Browser)"]
+        UI["Next.js SPA\nport 3000"]
+    end
+
+    subgraph API ["API Layer (FastAPI port 8000)"]
+        GW["API Router\n/api/*"]
+        SE["Sessions API\nPOST /sessions\nGET /sessions/:id/history"]
+        DE["Designs API\nPOST /designs\nPOST /designs/:id/process"]
+        JE["Jobs API\nGET /jobs/:id"]
+        SR["Search API\nPOST /search"]
+    end
+
+    subgraph Core ["Core Services"]
+        PG["DesignProfile Generator\nKeyword extraction\nColor analysis\nKorean translation"]
+        IG["Image Generator\n7-step fallback chain\nSD → Pollinations → SVG"]
+        EM["TF-IDF Embedder\nPure Python stdlib\nCosine similarity"]
+        RK["Ranking Engine\nEmbedding 55%\nColor 20%\nKeyword 20%\nMeta 5%"]
+    end
+
+    subgraph Worker ["Async Worker"]
+        WK["Inline Job Processor\nasyncio.create_task\n3-step pipeline"]
+    end
+
+    subgraph Providers ["Provider Layer"]
+        MP["Mock Provider\n100 curated samples"]
+        AP["API Provider\nOpenverse / Unsplash\nPexels / Pixabay"]
+        CP["Search Provider\nDuckDuckGo crawling\nhttpx + BeautifulSoup"]
+    end
+
+    subgraph Storage ["Storage"]
+        DB[("SQLite dev\nPostgreSQL prod\nSQLAlchemy async")]
+        CH["In-memory Cache\nasyncio.Queue\n→ Redis prod"]
+    end
+
+    UI -->|"POST /sessions\nPOST /designs\nPOST /designs/:id/process\nGET /jobs/:id poll 2s\nPOST /search"| GW
+    GW --> SE & DE & JE & SR
+    DE -->|"create_task()"| WK
+    WK --> PG --> EM
+    WK --> IG
+    WK -->|"save profile\ncache result"| DB & CH
+    JE -->|"read cached status"| CH
+    SR --> MP & AP & CP
+    MP & AP & CP -->|"raw candidates"| RK
+    RK -->|"scored results"| SR
+    RK -.->|"load embedding"| DB
+    SE & DE & JE & SR <-->|"async ORM"| DB
+```
+
+### Component Responsibilities
+
+| Component | Responsibility |
 |---|---|
-| **프론트엔드** | Next.js 16, TypeScript, Tailwind CSS v4, Lucide React |
-| **백엔드** | FastAPI, SQLAlchemy async, Pydantic v2 |
-| **데이터베이스** | SQLite (개발) / PostgreSQL (프로덕션) |
-| **비동기 큐** | asyncio.Queue 인메모리 (개발) / Redis (프로덕션) |
-| **AI 이미지 생성** | Stability AI (Stable Diffusion), HuggingFace, Openverse |
-| **이미지 처리** | Pillow (캔버스 dominant color 추출) |
-| **HTTP 클라이언트** | httpx (async) |
-| **테스트** | pytest, pytest-asyncio |
+| `DesignProfile Generator` | Normalize text/sketch input → keywords, dominant color, profile hash |
+| `TF-IDF Embedder` | Build sparse embedding vector (pure Python stdlib) |
+| `Image Generator` | Generate 4 style variations with 7-step API fallback chain |
+| `Ranking Engine` | Score candidates on embedding (55%), color (20%), keyword (20%), meta (5%) |
+| `Provider Layer` | Fan out search to multiple sources via shared `BaseProvider` interface |
 
 ---
 
-## 시스템 아키텍처
+## Frontend Architecture
 
 ```
-┌────────────────────────────────────────────────┐
-│              Next.js 프론트엔드                  │
-│     텍스트 입력 / 드로잉 캔버스 / 히스토리 패널    │
-└─────────────────┬──────────────────────────────┘
-                  │ REST API
-┌─────────────────▼──────────────────────────────┐
-│                FastAPI 백엔드                    │
-│                                                 │
-│  POST /sessions      POST /designs              │
-│  GET  /sessions/{id}/history                    │
-│  POST /designs/{id}/process                     │
-│  GET  /jobs/{id}     POST /search               │
-│                                                 │
-│  ┌──────────────────────────────────────────┐   │
-│  │           Job Processor (async)          │   │
-│  │  1. DesignProfile 생성 (키워드 + 색상)    │   │
-│  │  2. TF-IDF 임베딩 벡터 생성 & 저장       │   │
-│  │  3. AI 레퍼런스 이미지 생성              │   │
-│  └──────────────────────────────────────────┘   │
-│                      │                          │
-│       ┌──────────────┼──────────────┐           │
-│       ▼              ▼              ▼           │
-│  ┌─────────┐  ┌───────────┐  ┌──────────────┐  │
-│  │  Mock   │  │    API    │  │  AI Image    │  │
-│  │Provider │  │ Provider  │  │  Generator   │  │
-│  │100 상품 │  │Openverse  │  │  우선순위 체인│  │
-│  │14카테고리│  │Unsplash   │  │  Stability AI│  │
-│  │         │  │Pexels     │  │  HuggingFace │  │
-│  └─────────┘  │Pixabay    │  │  Openverse   │  │
-│               └───────────┘  └──────────────┘  │
-│                                                 │
-│  ┌──────────────────────────────────────────┐   │
-│  │         Ranking Engine                   │   │
-│  │  TF-IDF 코사인 유사도 + 색상 유사도        │   │
-│  │  + 키워드 매칭 + 메타 점수 + 페널티       │   │
-│  └──────────────────────────────────────────┘   │
-└────────────────────────────────────────────────┘
+page.tsx (state machine: idle → loading → results → error)
+├── Header
+│   └── [History button — conditional on session]
+├── [idle state]
+│   ├── InputModeTabs          # text | canvas toggle
+│   ├── TextPromptPanel        # textarea (English / Korean)
+│   │   └── CategorySelector   # UI / Logo / Icon / Illustration
+│   ├── DrawingCanvas          # HTML5 canvas, draw/erase, brush size
+│   │   └── CategorySelector
+│   └── [Submit button]
+├── [loading state]
+│   └── Progress bar + phase label
+├── [results state]
+│   ├── AI Analysis Panel
+│   │   ├── Keywords chips
+│   │   ├── Dominant color swatch
+│   │   └── 4×StyleVariation images (minimal/modern/vintage/bold)
+│   └── ResultList (12-item grid)
+│       └── ProductCard ×12
+├── [error state]
+│   └── Error message + dismiss
+├── HistoryPanel               # slide-over
+└── Footer
+```
+
+State is a four-value enum: `idle → loading → results → error`. All API calls are encapsulated in `lib/api.ts`; components never call `fetch` directly.
+
+UI configuration (categories, filters, result columns) is driven by config objects in `src/configs/`, not hardcoded JSX. Adding a new category or filter is a config change.
+
+---
+
+## Data Flow
+
+```
+1. POST /sessions                    → session_id
+2. POST /designs                     → design_id
+3. POST /designs/:id/process         → job_id  [async pipeline starts]
+   ├── [10%]  Generate DesignProfile (keywords + color)
+   ├── [10%]  Build TF-IDF embedding
+   ├── [40–70%]  Generate 4 AI style images (parallel)
+   └── [100%]  Save to DB + cache result
+4. GET /jobs/:id (poll every 2s)     → { progress, style_variations, keywords }
+5. POST /search                      → ranked results (top 12)
+```
+
+### Ranking Formula
+
+```python
+# With embedding
+score = (
+  0.55 * embedding_score  +   # TF-IDF cosine similarity
+  0.20 * color_score      +   # RGB Euclidean distance
+  0.20 * keyword_score    +   # tag overlap count
+  0.05 * meta_score           # image URL + deduplication
+)
+
+# Penalties (multiplicative)
+score *= 0.6  # negative keyword match
+score *= 0.9  # duplicate product URL
 ```
 
 ---
 
-## 주요 기능
+## Key Features
 
-### 입력
-- 텍스트 프롬프트 — 영어 및 한국어 입력 지원, 한국어 키워드 자동 번역
-- 드로잉 캔버스 — 스케치를 그리면 dominant color를 픽셀 분석(Pillow)으로 추출
-- 카테고리 선택 — UI / Logo / Icon / Illustration
+- **Multi-modal input** — freeform text (English and Korean) or HTML5 canvas sketch
+- **Korean language support** — 100+ word translation map, Hangul stopword filtering
+- **4 AI style variations** — minimal / modern / vintage / bold, generated in parallel
+- **7-step image generation fallback** — runs without any paid API key (Pollinations → SVG)
+- **Multi-provider search** — mock catalog, Openverse API, web crawling (extensible)
+- **No ML library dependency** — TF-IDF embedding using only Python stdlib
+- **Zero-infrastructure dev** — in-memory queue and cache, SQLite database
+- **Portable DB types** — SQLite in dev, PostgreSQL in prod, no code changes required
+- **Enterprise Console** — `/admin` dashboard for search observability, ranking debug, config management
 
-### AI 분석 파이프라인
-- 키워드 추출 — 불용어 제거, 한국어→영어 번역 매핑
-- 색상 감지 — 텍스트에서 색상명 파싱 / 캔버스에서 RGB 픽셀 분석
-- TF-IDF 임베딩 — 키워드 벡터를 JSON bytes로 직렬화해 DB 저장, 랭킹 시 코사인 유사도 계산 (Python stdlib만 사용, 외부 의존성 없음)
+### Image Generation Fallback Chain
 
-### AI 이미지 생성 (우선순위 체인)
-API 키 없이도 동작하는 다단계 폴백 구조:
-```
-ComfyUI (로컬) → Stability AI → HuggingFace → Stable Horde
-  → Openverse (CC 라이선스 무료) → 로컬 SVG
-```
-- 한국 환경에서는 Pollinations.ai가 차단되므로 Openverse를 기본 무료 소스로 사용
-- Openverse는 Wikipedia, Flickr 등의 CC 라이선스 이미지를 키워드 기반으로 검색
-
-### 검색 & 랭킹
-- **Mock Provider** — 100개 샘플 상품 (14개 카테고리), Dribbble / Behance / Figma / Freepik 등 실제 마켓플레이스 링크 연결
-- **API Provider** — Openverse 키워드 검색 (무료, API 키 불필요) + Unsplash / Pexels / Pixabay 공식 API (선택)
-- **한국어 지원** — 100개 이상의 한국어→영어 번역 매핑 (`악기` → `instrument`, `고양이` → `cat` 등)
-- **랭킹 공식** — `0.55×임베딩 + 0.20×색상 + 0.20×키워드 + 0.05×메타` (임베딩 있을 때) / 네거티브 키워드 페널티 / 중복 URL 페널티
-
-### 비동기 잡 처리
-- `POST /designs/{id}/process` → Job 생성 → `asyncio.create_task` 인라인 처리
-- 프론트엔드가 `/jobs/{id}` 폴링으로 진행률 실시간 표시 (`0% → 40% → 70% → 100%`)
-
-### 검색 히스토리
-- `GET /sessions/{id}/history` — 세션 내 최근 20개 검색 반환
-- 각 항목: AI 레퍼런스 이미지, 키워드 태그, dominant color, 상위 3개 결과 미리보기
-- 프론트엔드 슬라이드오버 패널 (첫 검색 후 Header에 History 버튼 표시)
-
----
-
-## Mock 샘플 데이터 (100개)
-
-API 키 없이도 즉시 검색 결과를 확인할 수 있도록 14개 카테고리, 100개 샘플 상품이 내장되어 있습니다.
-
-| 카테고리 | 샘플 수 | 검색 키워드 예시 |
+| Priority | Backend | Requirement |
 |---|---|---|
-| UI / 대시보드 | 6 | ui, dashboard, mobile, dark, landing |
-| 로고 / 브랜드 | 5 | logo, brand, minimal, geometric, vintage |
-| 아이콘 | 5 | icon, flat, 3d, line, emoji |
-| 일러스트 | 6 | illustration, watercolor, abstract, character, botanical |
-| 음악 / 악기 | 4 | music, instrument, guitar, piano, jazz |
-| 음식 / 카페 | 4 | food, restaurant, cafe, coffee, delivery |
-| 패션 / 의류 | 3 | fashion, clothing, style, elegant |
-| 여행 | 4 | travel, airplane, map, tourism, adventure |
-| 스포츠 / 피트니스 | 3 | sports, fitness, soccer, basketball, gym |
-| 기술 / 스타트업 | 4 | tech, startup, saas, ai, robot |
-| 자연 / 환경 | 3 | nature, eco, plant, leaf, green |
-| 동물 / 반려동물 | 3 | animal, cat, dog, pet, cute |
-| 의료 / 헬스 | 3 | medical, health, hospital, doctor |
-| 교육 | 3 | education, school, book, elearning |
-| 게임 / 엔터테인먼트 | 3 | game, rpg, esports, anime, character |
-| 소셜미디어 / 마케팅 | 2 | social, instagram, banner, marketing |
-| 부동산 / 건축 | 3 | realestate, house, building, interior |
-| 금융 / 핀테크 | 3 | finance, banking, fintech, crypto |
-| 자동차 | 2 | car, automotive, vehicle |
-| 우주 / 과학 | 2 | space, astronomy, star, planet |
-| 시즌 / 이벤트 | 5 | christmas, halloween, newyear, summer, winter |
-| 사진 / 카메라 | 2 | photography, camera, photo |
-| 팟캐스트 / 미디어 | 2 | podcast, media, broadcast |
-| 크립토 / NFT | 2 | crypto, nft, blockchain, web3 |
-| 3D / 글래스모피즘 | 3 | 3d, gradient, glass, neon |
-| 애니 / 카와이 | 2 | anime, kawaii, chibi, manga |
-| HR / 비즈니스 | 3 | corporate, presentation, infographic |
-| 뷰티 / 화장품 | 2 | beauty, cosmetics, skincare, makeup |
-| 타이포그래피 | 1 | typography, font, headline |
-| 웨딩 / 이벤트 | 2 | wedding, party, birthday |
-
-> **한국어 검색 지원**: 악기, 고양이, 음식, 여행, 우주 등 100개 이상의 한국어 단어를 영어로 자동 번역해 검색합니다.
+| 1 | ComfyUI (local SDXL) | Local container |
+| 2 | Stability AI | `STABILITY_API_KEY` |
+| 3 | HuggingFace Inference | `HF_TOKEN` (free tier) |
+| 4 | Stable Horde | `STABLE_HORDE_API_KEY` |
+| 5 | Pollinations.ai | None (free) |
+| 6 | Openverse | None (CC-licensed search) |
+| 7 | Local SVG | Always available |
 
 ---
 
-## API 엔드포인트
+## Engineering Decisions
 
-| 메서드 | 경로 | 설명 |
-|---|---|---|
-| `POST` | `/api/sessions` | 검색 세션 생성 |
-| `GET` | `/api/sessions/{id}/history` | 세션 검색 히스토리 조회 |
-| `POST` | `/api/designs` | 디자인 제출 (텍스트 또는 캔버스) |
-| `POST` | `/api/designs/{id}/process` | AI 처리 잡 시작 |
-| `GET` | `/api/jobs/{id}` | 잡 상태 및 진행률 폴링 |
-| `POST` | `/api/search` | DesignProfile 기반 검색 실행 |
-| `GET` | `/health` | 헬스 체크 |
+**DesignProfile as an intermediate structure.** Raw text is not comparable across providers and cannot represent sketch input. The `DesignProfile` is the canonical representation that decouples multi-modal input normalization from search and ranking. The `profile_hash` (SHA256 of sorted keywords + color) enables deduplication: semantically identical queries — including Korean/English equivalents — skip re-computation and return cached results.
+
+**Configuration-driven UI.** Filter options, categories, and result layouts are config objects, not component code. Adding a new category is a one-line config change. This also makes A/B testing UI variants low-cost: different configs, not different component trees.
+
+**Multi-provider fan-out.** Single-provider search has a recall ceiling. The fan-out architecture improves coverage by adding providers without modifying ranking logic. The `BaseProvider` interface ensures new sources integrate without changes to the search endpoint.
+
+**No external ML libraries.** TF-IDF embedding is implemented with only Python stdlib (`math`, `json`, `collections`), eliminating cold-start penalties and heavy dependencies. The embedder interface is a clean contract — swapping in a sentence-transformer or CLIP encoder requires no changes to ranking or storage.
+
+**Zero-infrastructure development.** `core/redis.py` implements the full Redis interface (`get`, `set`, `lpush`, `blpop`, `acquire_lock`) using Python's `asyncio.Queue` and a `dict`. The entire system runs with SQLite and in-memory queue — no Docker, no Redis, no Postgres required to start developing.
 
 ---
 
-## 데이터 모델
+## Future Improvements
 
-```
-Session ──< Design ──1 DesignProfile ──< SearchRun ──< SearchResult
-                 └──< Job
-```
-
-| 모델 | 주요 필드 |
+| Area | Direction |
 |---|---|
-| `Session` | id, user_agent, ip_hash |
-| `Design` | session_id, input_mode, text_prompt, canvas_data, status |
-| `DesignProfile` | keywords, dominant_color, embedding(bytes), profile(JSON) |
-| `Job` | status, progress, result(JSON), error_code |
-| `SearchResult` | title, image_url, product_url, score_overall, score_keyword, score_color, score_embedding |
+| Embedding | Replace TF-IDF with sentence-transformer or CLIP for higher semantic accuracy |
+| Visual search | Route canvas input to CLIP visual encoder, add `visual_score` ranking signal |
+| User signals | Track clicks and favorites, add personalization weight to ranking |
+| Provider coverage | Add Dribbble, Behance, Freepik provider implementations |
+| Caching | Profile-level result caching: identical `profile_hash` returns stored results |
+| Auth | Optional account for persistent history and saved searches |
+| Observability | Structured logging per job, provider hit rate dashboard |
 
 ---
 
-## 프로젝트 구조
+## Local Setup
 
-```
-├── backend/
-│   ├── app/
-│   │   ├── api/            # FastAPI 라우트 핸들러 (5개 엔드포인트)
-│   │   ├── core/           # 설정, DB, 커스텀 타입, 인메모리 캐시
-│   │   ├── models/         # SQLAlchemy 모델 (7개 테이블)
-│   │   ├── providers/      # 검색 프로바이더 (mock, api)
-│   │   ├── services/       # 비즈니스 로직
-│   │   │   ├── profile_generator.py   # 키워드 추출 + 색상 분석
-│   │   │   ├── image_generator.py     # AI 이미지 생성 (폴백 체인)
-│   │   │   ├── embedder.py            # TF-IDF 임베딩 (stdlib만 사용)
-│   │   │   └── ranking.py             # 랭킹 알고리즘
-│   │   ├── worker/         # 비동기 잡 프로세서
-│   │   └── main.py
-│   ├── tests/              # pytest 테스트 (26개)
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── app/            # Next.js 페이지 (SPA)
-│   │   ├── components/     # React 컴포넌트 9개
-│   │   │   ├── Header.tsx             # 히스토리 버튼 포함
-│   │   │   ├── HistoryPanel.tsx       # 검색 히스토리 슬라이드오버
-│   │   │   ├── ProductCard.tsx        # 검색 결과 카드
-│   │   │   ├── DrawingCanvas.tsx      # 스케치 입력 캔버스
-│   │   │   └── ...
-│   │   ├── lib/api.ts       # API 클라이언트 + 잡 폴링
-│   │   └── types/api.ts     # TypeScript 타입 정의
-│   └── package.json
-└── package.json             # 루트 워크스페이스 스크립트
-```
-
----
-
-## 실행 방법
-
-### 사전 요구사항
+### Prerequisites
 
 - Node.js 18+ & pnpm
 - Python 3.10+
 
-### 설치
+### Install
 
 ```bash
-# 백엔드
+# Clone
+git clone https://github.com/devbinlog/FMD.git
+cd FMD
+
+# Backend
 cd backend && pip install -r requirements.txt
+cd ..
 
-# 프론트엔드
+# Frontend
 cd frontend && pnpm install
+cd ..
 ```
 
-### 환경 변수 (선택 사항)
+### Environment Variables (all optional)
 
-`backend/.env` 파일 생성:
+Create `backend/.env`:
 
 ```bash
-# AI 이미지 생성 (우선순위 순 — 하나만 설정해도 됨)
-HF_TOKEN=hf_...                # HuggingFace 무료 토큰 (추천, huggingface.co/settings/tokens)
-STABILITY_API_KEY=sk-...       # Stability AI — Stable Diffusion 이미지 생성
-COMFYUI_URL=http://...         # 로컬 ComfyUI 서버 주소
+# AI image generation (priority order — one is enough)
+HF_TOKEN=hf_...                # HuggingFace free tier (recommended)
+STABILITY_API_KEY=sk-...       # Stability AI (Stable Diffusion)
+COMFYUI_URL=http://...         # Local ComfyUI server
 
-# 검색 결과 이미지 (선택 — 없어도 Openverse로 동작)
-UNSPLASH_ACCESS_KEY=...        # Unsplash API (무료 50 req/hr)
-PEXELS_API_KEY=...             # Pexels API (무료 200 req/hr)
-PIXABAY_API_KEY=...            # Pixabay API (무료 100 req/hr)
+# Search result images (optional — Openverse works without keys)
+UNSPLASH_ACCESS_KEY=...
+PEXELS_API_KEY=...
+PIXABAY_API_KEY=...
 ```
 
-> 모든 API 키는 선택 사항입니다. 키 없이도 **Openverse** (CC 라이선스 무료 이미지)와 100개 내장 샘플로 전체 기능이 동작합니다.
+> All API keys are optional. The full pipeline works without any key using Openverse (CC-licensed) and 100 built-in mock samples.
 
-### 개발 서버 실행
+### Run
 
 ```bash
-pnpm dev        # 프론트엔드(:3000) + 백엔드(:8000) 동시 실행
+pnpm dev        # Frontend (:3000) + Backend (:8000) concurrently
 
-pnpm dev:fe     # 프론트엔드만 http://localhost:3000
-pnpm dev:be     # 백엔드만    http://localhost:8000
+pnpm dev:fe     # Frontend only  → http://localhost:3000
+pnpm dev:be     # Backend only   → http://localhost:8000
+                #                  http://localhost:8000/docs  (Swagger UI)
 ```
 
-### 테스트
+### Test
 
 ```bash
-pnpm test:be                     # 전체 백엔드 테스트 (26개)
-pnpm test:be:one "test_name"     # 단일 테스트 실행
+pnpm test:be                     # All backend tests
+pnpm test:be:one "test_name"     # Single test
 ```
 ---
 
-### 샘플 테스트 
-약 100개의 샘플 존재 -> 
+### Sample Output
 
-텍스트로 고양이 입력한 결과 이미지 형태
+100 built-in mock samples — example: searching "고양이" (cat)
+
 <img width="1425" height="721" alt="프롬프트 고양이 입력" src="https://github.com/user-attachments/assets/04ffdc26-528a-4a6f-a06e-93ece837d43e" />
 
+---
 
+## Project Structure
 
-## 설계 포인트
+```
+├── backend/
+│   ├── app/
+│   │   ├── api/            # FastAPI route handlers (5 endpoints)
+│   │   ├── core/           # Config, DB engine, portable types, in-memory cache
+│   │   ├── models/         # SQLAlchemy ORM (7 tables)
+│   │   ├── schemas/        # Pydantic v2 request/response models
+│   │   ├── providers/      # BaseProvider + mock / api / search implementations
+│   │   ├── services/
+│   │   │   ├── profile_generator.py   # Keyword extraction + color analysis
+│   │   │   ├── image_generator.py     # AI image gen (7-step fallback)
+│   │   │   ├── embedder.py            # TF-IDF embedding (stdlib only)
+│   │   │   └── ranking.py             # Multi-signal ranking algorithm
+│   │   ├── worker/         # Inline async job processor
+│   │   └── main.py         # FastAPI entry + DB init + provider seeding
+│   ├── tests/              # pytest test suite
+│   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── app/            # Next.js pages (SPA + /admin console)
+│   │   ├── components/     # 9 React components
+│   │   ├── configs/        # Category / filter / column config objects
+│   │   ├── lib/api.ts      # API client + job polling
+│   │   └── types/api.ts    # TypeScript type definitions
+│   └── package.json
+├── docs/                   # Engineering design documents
+└── package.json            # Root workspace scripts
+```
 
-API 키 없이도 완전히 동작하는 구조
-모든 외부 서비스에 다단계 폴백 체인을 적용해, 어떤 환경에서도 전체 기능이 동작합니다. Pollinations.ai → DiceBear → 로컬 SVG 생성까지 이어지는 이미지 생성 체인이 대표적인 예입니다.
+---
 
-외부 ML 라이브러리 없는 임베딩 구현
-TF-IDF 기반 코사인 유사도를 Python 표준 라이브러리(`math`, `json`, `collections`)만으로 구현했습니다. numpy나 scikit-learn 없이도 의미 있는 시맨틱 유사도 점수를 랭킹에 반영합니다.
+## API Reference
 
-SQLite/PostgreSQL 공용 포터블 타입
-`GUID`, `JSONType`, `StringArray` 커스텀 SQLAlchemy 타입을 구현해 개발(SQLite)과 프로덕션(PostgreSQL) 환경을 코드 변경 없이 전환할 수 있습니다.
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/sessions` | Create search session |
+| `GET` | `/api/sessions/{id}/history` | Fetch session search history (last 20) |
+| `POST` | `/api/designs` | Submit design (text or canvas) |
+| `POST` | `/api/designs/{id}/process` | Start async AI processing job |
+| `GET` | `/api/jobs/{id}` | Poll job status and progress |
+| `POST` | `/api/search` | Run ranked search against providers |
+| `GET` | `/health` | Health check |
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 16 · React 19 · TypeScript · Tailwind CSS v4 |
+| Backend | FastAPI · Python 3.11 · Pydantic v2 |
+| ORM | SQLAlchemy 2.0 async |
+| Database | SQLite (dev) / PostgreSQL (prod) |
+| Queue / Cache | asyncio.Queue (dev) / Redis (prod) |
+| HTTP Client | httpx (async) |
+| Scraping | BeautifulSoup4 + lxml |
+| AI Images | Stability AI / HuggingFace / Pollinations.ai |
+| Icons | Lucide React |
+
+---
+
+*FMD is a portfolio project demonstrating full-stack product engineering: async API design, multi-modal AI pipeline, semantic search, and configuration-driven frontend architecture.*

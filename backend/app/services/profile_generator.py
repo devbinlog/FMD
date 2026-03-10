@@ -42,6 +42,18 @@ _KO_EN_MAP = {
     "스포츠": "sports", "축구": "soccer", "농구": "basketball", "야구": "baseball",
     "여행": "travel", "지도": "map", "비행기": "airplane", "기차": "train",
     "의료": "medical", "건강": "health", "교육": "education", "학교": "school",
+    # Colors (adjective form — for use in image prompts)
+    "빨간": "red", "빨강": "red", "빨간색": "red",
+    "파란": "blue", "파랑": "blue", "파란색": "blue",
+    "초록": "green", "녹색": "green", "초록색": "green",
+    "노란": "yellow", "노랑": "yellow", "노란색": "yellow",
+    "보라": "purple", "보라색": "purple",
+    "검정": "black", "검은": "black", "검은색": "black", "검정색": "black",
+    "흰": "white", "하얀": "white", "흰색": "white", "하얀색": "white",
+    "분홍": "pink", "분홍색": "pink",
+    "주황": "orange", "주황색": "orange",
+    "갈색": "brown",
+    "회색": "gray", "회색빛": "gray",
     # Style/mood
     "따뜻한": "warm", "차가운": "cool", "밝은": "bright", "어두운": "dark",
     "부드러운": "soft", "강한": "bold", "재미있는": "fun", "전문적": "professional",

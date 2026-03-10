@@ -80,13 +80,52 @@ async def generate_design_image(
         if result.get("image_url"):
             return result
 
-    # 5. Openverse — free open-licensed image search (no API key needed)
-    logger.info("Using Openverse (free, no API key needed)")
-    return await _openverse_fetch(prompt, style)
+    # 5. Pollinations.ai — free AI image generation (no API key needed)
+    logger.info("Using Pollinations.ai (free, no API key needed)")
+    result = await _pollinations_fetch(enhanced_prompt)
+    if result.get("image_url"):
+        return result
+
+    # 6. Openverse — open-licensed image search (fallback when Pollinations fails)
+    # enhanced_prompt is already in English (Korean translated), so results are relevant
+    logger.info("Pollinations failed — falling back to Openverse")
+    result = await _openverse_fetch(enhanced_prompt, style)
+    if result.get("image_url"):
+        return result
+
+    # 7. Local SVG fallback (last resort)
+    logger.info("All image sources failed — generating local SVG")
+    return _svg_result(prompt, [])
+
+
+def _translate_ko_to_en(text: str) -> str:
+    """Replace Korean words in text with English equivalents before sending to AI models."""
+    import re as _re
+    from app.services.profile_generator import _KO_EN_MAP
+
+    ko_words = _re.findall(r"[가-힣]+", text)
+    result = text
+    # Longer matches first to avoid partial replacements (e.g. "강아지" before "강아")
+    for kw in sorted(set(ko_words), key=len, reverse=True):
+        en = _KO_EN_MAP.get(kw)
+        if not en:
+            for ko, en_val in _KO_EN_MAP.items():
+                if ko in kw or kw in ko:
+                    en = en_val
+                    break
+        if en:
+            result = result.replace(kw, en)
+    return result
 
 
 def _enhance_prompt(prompt: str, style: str) -> str:
-    """Enhance user prompt for better design-focused generation."""
+    """Enhance user prompt for better design-focused generation.
+
+    Translates Korean words to English first so all AI backends
+    (Stability AI, HuggingFace, Stable Horde, Pollinations) receive
+    a prompt they can understand, with the subject word first.
+    """
+    en_prompt = _translate_ko_to_en(prompt)
     style_suffixes = {
         "design-asset": ", professional design asset, clean background, high quality, vector style",
         "logo": ", professional logo design, minimal, clean, vector, white background",
@@ -95,7 +134,7 @@ def _enhance_prompt(prompt: str, style: str) -> str:
         "illustration": ", digital illustration, professional art, vibrant colors",
     }
     suffix = style_suffixes.get(style, style_suffixes["design-asset"])
-    return f"{prompt}{suffix}"
+    return f"{en_prompt}{suffix}"
 
 
 async def _generate_via_stability(prompt: str) -> dict:
@@ -200,10 +239,11 @@ async def _pollinations_fetch(prompt: str, style: str = "design-asset") -> dict:
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
         for candidate in candidates:
             encoded = quote(candidate)
-            # Try without query params first (some params trigger 530)
+            # nologo=true removes watermark; model=flux gives best design quality
             urls_to_try = [
+                f"https://image.pollinations.ai/prompt/{encoded}?model=flux&width=512&height=512&nologo=true",
+                f"https://image.pollinations.ai/prompt/{encoded}?width=512&height=512&nologo=true",
                 f"https://image.pollinations.ai/prompt/{encoded}",
-                f"https://image.pollinations.ai/prompt/{encoded}?model=flux&width=512&height=512",
             ]
             for url in urls_to_try:
                 try:
@@ -226,9 +266,9 @@ async def _pollinations_fetch(prompt: str, style: str = "design-asset") -> dict:
                     logger.warning("Pollinations.ai error for '%s': %s", candidate, exc)
                     break
 
-    # All Pollinations attempts failed → local SVG
-    logger.info("Pollinations unavailable — generating local SVG preview")
-    return _svg_result(prompt, unique_words)
+    # All Pollinations attempts failed — let caller try next source
+    logger.info("Pollinations unavailable — returning empty for next fallback")
+    return {}
 
 
 async def _openverse_fetch(prompt: str, style: str = "design-asset") -> dict:

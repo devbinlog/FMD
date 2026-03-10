@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
-import { Search, Loader2, Wand2 } from "lucide-react";
+import { Loader2, Wand2 } from "lucide-react";
 
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
@@ -21,7 +21,7 @@ import {
   search,
   getSessionHistory,
 } from "@/lib/api";
-import type { SearchResultItem, JobStatus, HistoryItem } from "@/types/api";
+import type { SearchResultItem, JobStatus, StyleVariation, HistoryItem } from "@/types/api";
 
 type AppState = "idle" | "loading" | "results" | "error";
 
@@ -35,6 +35,7 @@ export default function Home() {
   const [errorMsg, setErrorMsg] = useState("");
   const [progress, setProgress] = useState(0);
   const [aiImageUrl, setAiImageUrl] = useState<string | null>(null);
+  const [styleVariations, setStyleVariations] = useState<StyleVariation[]>([]);
   const [keywords, setKeywords] = useState<string[]>([]);
   const [dominantColor, setDominantColor] = useState<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -76,6 +77,7 @@ export default function Home() {
     setErrorMsg("");
     setProgress(0);
     setAiImageUrl(null);
+    setStyleVariations([]);
     setKeywords([]);
     setDominantColor(null);
 
@@ -99,6 +101,7 @@ export default function Home() {
       finalStatus = await pollJobUntilDone(job.job_id, (status) => {
         setProgress(status.progress);
         if (status.ai_image_url) setAiImageUrl(status.ai_image_url);
+        if (status.style_variations?.length) setStyleVariations(status.style_variations);
       });
 
       if (finalStatus.status === "failed") {
@@ -106,12 +109,13 @@ export default function Home() {
       }
 
       if (finalStatus.ai_image_url) setAiImageUrl(finalStatus.ai_image_url);
+      if (finalStatus.style_variations?.length) setStyleVariations(finalStatus.style_variations);
       if (finalStatus.keywords) setKeywords(finalStatus.keywords);
       if (finalStatus.dominant_color) setDominantColor(finalStatus.dominant_color);
 
       const searchRes = await search({
         design_id: design.design_id,
-        providers: ["mock", "api"],
+        providers: ["mock"],
         limit: 12,
       });
 
@@ -127,8 +131,8 @@ export default function Home() {
     progress < 0.4
       ? "Analyzing design..."
       : progress < 0.7
-        ? "Generating AI reference..."
-        : "Searching products...";
+        ? "Generating 4 AI styles..."
+        : "Finding references...";
 
   return (
     <div className="flex min-h-screen flex-col bg-[#faf9f7]">
@@ -143,10 +147,10 @@ export default function Home() {
           <section className="space-y-8">
             <div>
               <h2 className="text-3xl font-bold tracking-tight text-stone-900">
-                Find Your Design
+                Generate Design References
               </h2>
               <p className="mt-2 text-[15px] text-stone-500">
-                Describe what you&apos;re looking for or draw a sketch &mdash; AI will find matching designs across the web.
+                Describe your vision &mdash; AI generates 4 style directions, then surfaces real-world examples from the web.
               </p>
             </div>
 
@@ -198,8 +202,8 @@ export default function Home() {
                     </>
                   ) : (
                     <>
-                      <Search className="h-4 w-4" />
-                      Search Designs
+                      <Wand2 className="h-4 w-4" />
+                      Generate References
                     </>
                   )}
                 </button>
@@ -220,8 +224,8 @@ export default function Home() {
             </div>
           )}
 
-          {/* AI Analysis Panel */}
-          {appState === "results" && (aiImageUrl || keywords.length > 0) && (
+          {/* AI Reference Panel */}
+          {appState === "results" && (styleVariations.length > 0 || aiImageUrl || keywords.length > 0) && (
             <section className="rounded-2xl border border-stone-200/80 bg-white p-6">
               <div className="flex items-center gap-2.5 mb-5">
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-50">
@@ -229,67 +233,90 @@ export default function Home() {
                 </div>
                 <div>
                   <h3 className="text-[15px] font-semibold text-stone-900">
-                    AI Design Analysis
+                    AI Style Directions
                   </h3>
-                  <p className="text-xs text-stone-400">Powered by Stable Diffusion</p>
+                  <p className="text-xs text-stone-400">
+                    {styleVariations.length > 0
+                      ? `${styleVariations.length} variations · Stable Diffusion`
+                      : "Powered by Stable Diffusion"}
+                  </p>
                 </div>
               </div>
-              <div className="flex flex-col gap-5 md:flex-row">
-                {aiImageUrl && (
-                  <div className="shrink-0">
-                    <img
-                      src={aiImageUrl}
-                      alt="AI generated reference"
-                      className="h-44 w-44 rounded-xl border border-stone-200 object-cover"
-                    />
+
+              {/* 4-style grid */}
+              {styleVariations.length > 0 ? (
+                <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {styleVariations.map((v) => (
+                    <div key={v.style} className="space-y-1.5">
+                      <img
+                        src={v.image_url}
+                        alt={`${v.style} style`}
+                        className="w-full aspect-square rounded-xl border border-stone-200 object-cover"
+                      />
+                      <p className="text-center text-xs font-medium capitalize text-stone-500">
+                        {v.style}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : aiImageUrl ? (
+                <div className="mb-5 shrink-0">
+                  <img
+                    src={aiImageUrl}
+                    alt="AI generated reference"
+                    className="h-44 w-44 rounded-xl border border-stone-200 object-cover"
+                  />
+                </div>
+              ) : null}
+
+              <div className="flex flex-col gap-4 sm:flex-row">
+                {keywords.length > 0 && (
+                  <div className="flex-1">
+                    <p className="text-xs font-medium uppercase tracking-wider text-stone-400 mb-2">
+                      Design Keywords
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {keywords.map((kw) => (
+                        <span
+                          key={kw}
+                          className="rounded-full border border-stone-200 bg-stone-50 px-2.5 py-1 text-xs font-medium text-stone-600"
+                        >
+                          {kw}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
-                <div className="flex-1 space-y-4">
-                  {keywords.length > 0 && (
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-stone-400 mb-2">
-                        Detected Keywords
-                      </p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {keywords.map((kw) => (
-                          <span
-                            key={kw}
-                            className="rounded-full border border-stone-200 bg-stone-50 px-2.5 py-1 text-xs font-medium text-stone-600"
-                          >
-                            {kw}
-                          </span>
-                        ))}
-                      </div>
+                {dominantColor && (
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-stone-400 mb-2">
+                      Dominant Color
+                    </p>
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className="h-7 w-7 rounded-lg border border-stone-200"
+                        style={{ backgroundColor: dominantColor }}
+                      />
+                      <span className="text-sm font-mono text-stone-600">
+                        {dominantColor}
+                      </span>
                     </div>
-                  )}
-                  {dominantColor && (
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-stone-400 mb-2">
-                        Dominant Color
-                      </p>
-                      <div className="flex items-center gap-2.5">
-                        <div
-                          className="h-7 w-7 rounded-lg border border-stone-200"
-                          style={{ backgroundColor: dominantColor }}
-                        />
-                        <span className="text-sm font-mono text-stone-600">
-                          {dominantColor}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </section>
           )}
 
-          {/* Results */}
+          {/* Real-world References */}
           {appState === "results" && results.length > 0 && (
             <section>
               <div className="mb-6 flex items-center justify-between">
-                <h2 className="text-2xl font-bold tracking-tight text-stone-900">
-                  Results
-                </h2>
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight text-stone-900">
+                    Real-world References
+                  </h2>
+                  <p className="text-sm text-stone-400 mt-1">Ranked by style similarity</p>
+                </div>
                 <span className="rounded-full bg-stone-100 px-3 py-1 text-sm font-medium text-stone-600">
                   {results.length} found
                 </span>

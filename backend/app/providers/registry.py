@@ -1,10 +1,12 @@
 from app.providers.base import BaseProvider
 from app.providers.mock_provider import MockProvider
 from app.providers.api_provider import ApiProvider
+from app.providers.search_provider import SearchProvider
 
 _PROVIDERS: dict[str, BaseProvider] = {
     "mock": MockProvider(),
     "api": ApiProvider(),
+    "search": SearchProvider(),
 }
 
 

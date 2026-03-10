@@ -22,7 +22,11 @@ async def lifespan(app: FastAPI):
     async with async_session() as db:
         from app.models.provider import Provider
 
-        for pid, pname in [("mock", "Mock Provider"), ("api", "API Provider")]:
+        for pid, pname in [
+            ("mock", "Mock Provider"),
+            ("api", "API Provider"),
+            ("search", "Search Provider (Google/Naver)"),
+        ]:
             existing = await db.get(Provider, pid)
             if not existing:
                 db.add(Provider(id=pid, name=pname, base_url="", enabled=True))

@@ -1,13 +1,34 @@
 "use client";
 
+import { useState } from "react";
 import type { SearchResultItem } from "@/types/api";
 import { ArrowUpRight } from "lucide-react";
+
+// Module-level cache: persists across re-renders and scroll-induced remounts
+const _failedUrls = new Set<string>();
+
+// Domains that serve unrelated placeholder/random images — skip entirely
+const _SKIP_HOSTS = new Set(["picsum.photos", "loremflickr.com", "placeholder.com"]);
+
+function isUsableImageUrl(url: string | null): boolean {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.replace("www.", "");
+    return !_SKIP_HOSTS.has(host);
+  } catch {
+    return false;
+  }
+}
 
 interface ProductCardProps {
   item: SearchResultItem;
 }
 
 export default function ProductCard({ item }: ProductCardProps) {
+  // Initialize from module-level cache so remounts don't re-attempt known-bad URLs
+  const [imgError, setImgError] = useState(
+    () => !isUsableImageUrl(item.image_url) || _failedUrls.has(item.image_url ?? "")
+  );
   const similarityPct = Math.round(item.score_overall * 100);
 
   const getSourceLabel = (url: string | null): string => {
@@ -55,10 +76,15 @@ export default function ProductCard({ item }: ProductCardProps) {
       className="group block overflow-hidden rounded-2xl border border-stone-200/80 bg-white transition-all duration-200 hover:border-stone-300 hover:shadow-lg hover:shadow-stone-200/50"
     >
       <div className="relative aspect-[4/3] overflow-hidden bg-stone-100">
-        {item.image_url ? (
+        {item.image_url && !imgError ? (
           <img
             src={item.image_url}
             alt={item.title}
+            loading="lazy"
+            onError={() => {
+              if (item.image_url) _failedUrls.add(item.image_url);
+              setImgError(true);
+            }}
             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
           />
         ) : (
@@ -94,7 +120,7 @@ export default function ProductCard({ item }: ProductCardProps) {
           {item.title}
         </h3>
         <div className="mt-2 flex items-center gap-2">
-          {item.price != null && item.price > 0 ? (
+          {item.price == null ? null : item.price > 0 ? (
             <span className="text-sm font-bold text-stone-900">
               {item.price.toLocaleString()}
               <span className="font-normal text-stone-500">won</span>
@@ -109,7 +135,7 @@ export default function ProductCard({ item }: ProductCardProps) {
           {item.explanation.join(" · ")}
         </p>
         <div className="mt-3 flex items-center gap-1 text-xs font-medium text-orange-600 opacity-0 transition-opacity group-hover:opacity-100">
-          View on {sourceLabel || "site"}
+          Open reference
           <ArrowUpRight className="h-3 w-3" />
         </div>
       </div>
