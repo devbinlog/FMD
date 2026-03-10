@@ -1,5 +1,44 @@
-"""Ranking v1 — pure function implementation per docs/05_ranking.md"""
+"""Ranking v1 — pure function implementation per docs/05_ranking.md
+
+Weights are injectable via RankingWeights so that:
+  - Unit tests can supply custom weights without monkey-patching
+  - The Config Studio admin panel can pass live-edited weights per request
+  - A/B experiments can assign different RankingWeights instances per session
+"""
+from dataclasses import dataclass
+
 from app.services.embedder import cosine_similarity as _cosine_similarity
+
+
+@dataclass
+class RankingWeights:
+    """Scoring weights for the multi-signal ranking function.
+
+    With embedding (sum must be 1.0):
+        w_embedding + w_color + w_keyword + w_meta = 1.0
+
+    Without embedding (sum must be 1.0):
+        w_color_noem + w_keyword_noem + w_meta_noem = 1.0
+
+    Penalty multipliers are applied after the base score.
+    """
+    # ── With embedding ────────────────────────────────────────────────────
+    w_embedding: float = 0.55
+    w_color: float = 0.20
+    w_keyword: float = 0.20
+    w_meta: float = 0.05
+
+    # ── Without embedding (fallback) ──────────────────────────────────────
+    w_color_noem: float = 0.45
+    w_keyword_noem: float = 0.45
+    w_meta_noem: float = 0.10
+
+    # ── Penalties (multiplicative) ────────────────────────────────────────
+    p_negative_kw: float = 0.6
+    p_duplicate_url: float = 0.9
+
+
+DEFAULT_WEIGHTS = RankingWeights()
 
 
 def _keyword_score(title: str, tags: list[str], keywords: list[str]) -> float:
@@ -78,11 +117,21 @@ def rank_results(
     negative_keywords: list[str],
     dominant_color: str | None,
     embedding: bytes | None = None,
+    weights: RankingWeights = DEFAULT_WEIGHTS,
 ) -> list[dict]:
     """Rank raw provider results per docs/05_ranking.md algorithm.
 
-    Each item in raw_results should have:
-        title, image_url, product_url, price, color_hex, tags, search_run_id
+    Args:
+        raw_results:       Candidates from all providers. Each item must have:
+                           title, image_url, product_url, price, color_hex,
+                           tags, search_run_id
+        keywords:          Positive keywords from the DesignProfile.
+        negative_keywords: Keywords whose presence penalises a result.
+        dominant_color:    Hex color from the DesignProfile.
+        embedding:         TF-IDF unit-vector bytes from the DesignProfile.
+        weights:           RankingWeights instance. Defaults to DEFAULT_WEIGHTS.
+                           Pass a custom instance to run A/B experiments or
+                           apply Config-Studio-edited weights per request.
     """
     has_embedding = embedding is not None
     seen_urls: set[str] = set()
@@ -103,17 +152,26 @@ def rank_results(
         if product_url:
             seen_urls.add(product_url)
 
-        # Aggregation
+        # ── Aggregation ──────────────────────────────────────────────────
         if has_embedding:
-            overall = 0.55 * emb + 0.20 * color + 0.20 * kw + 0.05 * meta
+            overall = (
+                weights.w_embedding * emb
+                + weights.w_color * color
+                + weights.w_keyword * kw
+                + weights.w_meta * meta
+            )
         else:
-            overall = 0.45 * color + 0.45 * kw + 0.10 * meta
+            overall = (
+                weights.w_color_noem * color
+                + weights.w_keyword_noem * kw
+                + weights.w_meta_noem * meta
+            )
 
-        # Penalties
+        # ── Penalties ────────────────────────────────────────────────────
         if _has_negative_keyword(title, tags, negative_keywords):
-            overall *= 0.6
+            overall *= weights.p_negative_kw
         if product_url and product_url in seen_urls and len(seen_urls) > 1:
-            overall *= 0.9
+            overall *= weights.p_duplicate_url
 
         explanation = _build_explanation(kw, color, emb)
 
